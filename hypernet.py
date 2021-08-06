@@ -318,7 +318,6 @@ def gauss_newton_ECSW(func, jac, basis, y0, w, sample_inds, sample_weights,
         w[sample_inds] = basis[sample_inds, :].dot(y)
         w[sample_inds-1] = basis[sample_inds-1, :].dot(y)
 
-    pdb.set_trace()
     return y, resnorms
 
 def POD(snaps):
