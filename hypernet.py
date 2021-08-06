@@ -462,7 +462,6 @@ def main():
     ax.legend()
     plt.show()
 
-    ## test credential manager    
     pdb.set_trace()
     
 
