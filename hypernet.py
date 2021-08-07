@@ -161,11 +161,12 @@ def inviscid_burgers_ecsw(grid, weights, w0, dt, num_steps, mu, basis):
     for i in range(num_steps):
 
         def res(w): 
-            return inviscid_burgers_ecsw_res(w, grid, sample_inds, dt, wp, mu)
+            # return inviscid_burgers_ecsw_res(w, grid, sample_inds, dt, wp, mu)
+            return inviscid_burgers_res(w, grid, dt, wp, mu)
 
         def jac(w):
-            return inviscid_burgers_ecsw_jac(w, grid, sample_inds, dt)
-            # return inviscid_burgers_jac(w, grid, dt)
+            # return inviscid_burgers_ecsw_jac(w, grid, sample_inds, dt)
+            return inviscid_burgers_jac(w, grid, dt)
 
         print(" ... Working on timestep {}".format(i))
         y, resnorms = gauss_newton_ECSW(res, jac, basis, yp, wtmp, sample_inds, sample_weights)
@@ -224,6 +225,7 @@ def inviscid_burgers_ecsw_jac(w, grid, sample_inds, dt):
         if ind+1 in sample_inds:
             J[i+1, i] = -0.5*w[ind]*dt/dx[i+1]
     return J.tocsr()
+    ## test credential manager    
 
 def inviscid_burgers_res(w, grid, dt, wp, mu):
     """ 
@@ -294,29 +296,31 @@ def gauss_newton_LSPG(func, jac, basis, y0,
     return y, resnorms
 
 def gauss_newton_ECSW(func, jac, basis, y0, w, sample_inds, sample_weights,
-                      stepsize=1, max_its=20, relnorm_cutoff=1e-5, min_delta=0.01):
+                      stepsize=1, max_its=20, relnorm_cutoff=1e-4, min_delta=1E-8):
     y = y0.copy()
-    w[sample_inds] = basis[sample_inds, :].dot(y0)
-    w[sample_inds-1] = basis[sample_inds-1, :].dot(y0)
-    init_norm = np.linalg.norm(func(w))
+    w = basis.dot(y0)
+    init_norm = np.linalg.norm(func(w)[sample_inds] * sample_weights)
     resnorms = []
     for i in range(max_its):
-        resnorm = np.linalg.norm(func(w))
+        resnorm = np.linalg.norm(func(w)[sample_inds] * sample_weights)
         resnorms += [resnorm]
         if resnorm/init_norm < relnorm_cutoff:
             break
         if (len(resnorms) > 1) and (abs((resnorms[-2] - resnorms[-1]) / resnorms[-2]) < min_delta):
             break
-        J = jac(w)
-        f = func(w) * sample_weights
-        JV = (J.dot(basis[sample_inds,:])) * np.expand_dims(sample_weights, axis=1)
-        dy = np.linalg.lstsq(JV, -f, rcond=None)[0]
+
+        J = jac(w).toarray()
+        JV = J.dot(basis)[sample_inds, :]
+        JVw = np.diag(sample_weights).dot(JV)
+
+        f = func(w)[sample_inds]
+        fw = f * sample_weights
+        dy = np.linalg.lstsq(JVw, -fw, rcond=None)[0]
         # redjac = JV.T.dot(JV)
         # fred = JV.T.dot(f)
         # dy = np.linalg.solve(redjac, -fred)
         y += stepsize*dy
-        w[sample_inds] = basis[sample_inds, :].dot(y)
-        w[sample_inds-1] = basis[sample_inds-1, :].dot(y)
+        w = basis.dot(y)
 
     return y, resnorms
 
@@ -396,13 +400,13 @@ def compute_ECSW_training_matrix(snaps, prev_snaps, basis, res, jac, grid, dt, m
 def main():
 
     snap_folder = 'param_snaps'
-    num_vecs = 150
-    ecsw_max_support = 50
-    ecsw_err_thresh = 0.01
+    num_vecs = 50
+    ecsw_max_support = 250
+    ecsw_err_thresh = 1E-16
     snap_sample_factor = 10
 
     dt = 0.07
-    num_steps = 500
+    num_steps = 400
     num_cells = 500
     xl, xu = 0, 100
     w0 = np.ones(num_cells)
@@ -417,7 +421,7 @@ def main():
     all_snaps_list = []
     for mu in mu_list:
         snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder=snap_folder)
-        all_snaps_list += [snaps]
+        all_snaps_list += [snaps[:, :num_steps]]
 
     all_snaps = np.hstack(all_snaps_list)   
 
@@ -429,8 +433,8 @@ def main():
     Clist = []
     for imu, mu in enumerate(mu_list):
         mu_snaps = all_snaps_list[imu]
-        Ci = compute_ECSW_training_matrix(mu_snaps[:, 1:50], 
-                                          mu_snaps[:, 0:49], 
+        Ci = compute_ECSW_training_matrix(mu_snaps[:, 1:num_steps], 
+                                          mu_snaps[:, 0:num_steps-1], 
                                           basis_trunc, inviscid_burgers_res,
                                           inviscid_burgers_jac, grid, dt, mu)
         Clist += [Ci]
@@ -442,12 +446,12 @@ def main():
 
 
     # evaluate ROMs at mu_rom
-    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, 25, snap_folder=snap_folder)
+    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
     hprom_snaps = inviscid_burgers_ecsw(grid, weights, w0, dt, num_steps, mu_rom, basis_trunc)
     # prom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
 
     fig, ax = plt.subplots()
-    snaps_to_plot = range(50, 501, 50)
+    snaps_to_plot = range(num_steps//4, num_steps+1, num_steps//4)
     plot_snaps(grid, hdm_snaps, snaps_to_plot, 
                label='HDM', fig_ax=(fig,ax))
     # plot_snaps(grid, prom_snaps, snaps_to_plot, 

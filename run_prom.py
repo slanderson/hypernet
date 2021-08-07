@@ -16,7 +16,7 @@ from hypernet import (load_or_compute_snaps, make_1D_grid, inviscid_burgers_LSPG
 def main():
 
     snap_folder = 'param_snaps'
-    num_vecs = 200
+    num_vecs = 50
 
     dt = 0.07
     num_steps = 500
