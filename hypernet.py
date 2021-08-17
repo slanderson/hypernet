@@ -418,7 +418,7 @@ def compute_local_bases(snaps, num_clusts, energy_thresh=None, min_size=None, ma
     for iclust in range(num_clusts):
         clust_snaps = snaps[:, clust_assignments == iclust]
         basis, sigma = POD(clust_snaps)
-        num_vecs = podsize(sigma, energy_thresh=energy_thresh, min_size=None, max_size=None)
+        num_vecs = podsize(sigma, energy_thresh=energy_thresh, min_size=min_size, max_size=max_size)
         local_bases += [ basis[:, :num_vecs] ]
 
     return local_bases, centroids
@@ -452,6 +452,13 @@ def compute_ECSW_training_matrix(snaps, prev_snaps, basis, res, jac, grid, dt, m
             C[isnap*n_pod:isnap*n_pod+n_pod, inode] = ires[inode]*Wi[inode]
 
     return C
+
+def compute_error(rom_snaps, hdm_snaps):
+    """ Computes the relative error at each timestep """
+    sq_hdm = np.sqrt(np.square(rom_snaps).sum(axis=0))
+    sq_err = np.sqrt(np.square(rom_snaps - hdm_snaps).sum(axis=0))
+    rel_err = sq_err / sq_hdm
+    return rel_err, rel_err.mean()
 
 def param_to_snap_fn(mu, snap_folder="param_snaps", suffix='.npy'):
     npar = len(mu)
@@ -542,21 +549,32 @@ def main():
                                                   local_bases, centroids)
     rom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
     hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
+    errors, rms_err = compute_error(rom_snaps, hdm_snaps)
+    local_errors, local_rms_err = compute_error(local_rom_snaps, hdm_snaps)
 
-    fig, ax = plt.subplots()
+    fig, (ax1, ax2) = plt.subplots(2)
     snaps_to_plot = range(50, 501, 50)
     plot_snaps(grid, hdm_snaps, snaps_to_plot, 
-               label='HDM', fig_ax=(fig,ax))
+               label='HDM', fig_ax=(fig,ax1))
     plot_snaps(grid, rom_snaps, snaps_to_plot, 
-               label='PROM', fig_ax=(fig,ax), color='blue', linewidth=1)
+               label='PROM', fig_ax=(fig,ax1), color='blue', linewidth=1)
     plot_snaps(grid, local_rom_snaps, snaps_to_plot, 
-               label='Local PROM', fig_ax=(fig,ax), color='red', linewidth=1)
+               label='Local PROM', fig_ax=(fig,ax1), color='red', linewidth=1)
 
-    ax.set_xlim([grid.min(), grid.max()])
-    ax.set_xlabel('x')
-    ax.set_ylabel('w')
-    ax.set_title('Comparing HDM and ROMs')
-    ax.legend()
+    ax1.set_xlim([grid.min(), grid.max()])
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('w')
+    ax1.set_title('Comparing HDM and ROMs')
+    ax1.legend()
+
+    ax2.plot(errors, label='PROM error', color='blue')
+    ax2.plot(local_errors, label='Local PROM error', color='red')
+    ax2.set_xlabel('Time index')
+    ax2.set_ylabel('Relative error')
+    ax2.set_title('Comparing relative error')
+    print('PROM rel. error:        {}'.format(rms_err))
+    print('Local PROM rel. error:  {}'.format(local_rms_err))
+    ax2.legend()
     plt.show()
 
     pdb.set_trace()
