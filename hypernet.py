@@ -8,7 +8,7 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
-import scipy.optimize as opt
+import sklearn.cluster as clust
 
 from lsqnonneg import lsqnonneg
 
@@ -86,10 +86,10 @@ def inviscid_burgers_implicit(grid, w0, dt, num_steps, mu):
 
     return snaps
 
-def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
+def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centroids):
     """
     Use a first-order Godunov spatial discretization and a second-order trapezoid rule
-    time integrator to solve an LSPG PROM for a parameterized inviscid 1D burgers problem
+    time integrator to solve a local LSPG PROM for a parameterized inviscid 1D burgers problem
     with a source term. The parameters are as follows:
     mu[0]: inlet state value
     mu[1]: the exponential rate of the exponential source term
@@ -100,16 +100,21 @@ def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
     w(x, t=0) = w0
     """
 
-    npod = basis.shape[1]
+    nclusts = len(local_bases) 
+    npod_sum = sum(basis_i.shape[1] for basis_i in local_bases)
+    npod_avg = npod_sum / nclusts
     snaps =  np.zeros((w0.size, num_steps+1))
-    red_coords = np.zeros((npod, num_steps+1))
+    iclust = nearest_centroid(w0, centroids)
+    basis = local_bases[iclust]
     y0 = basis.T.dot(w0)
     w0 = basis.dot(y0)
     snaps[:,0] = w0
-    red_coords[:,0] = y0
+    red_coords = [y0]
+    iclusts = [iclust]
     wp = w0.copy()
     yp = y0.copy()
-    print("Running ROM of size {} for mu1={}, mu2={}".format(npod, mu[0], mu[1]))
+    print(("Running local ROM with {} clusters and avg. basis size {} "+
+           "for mu1={}, mu2={}").format(nclusts, npod_avg, mu[0], mu[1]))
     for i in range(num_steps):
 
         def res(w): 
@@ -118,14 +123,21 @@ def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
         def jac(w):
             return inviscid_burgers_jac(w, grid, dt)
 
-        print(" ... Working on timestep {}".format(i))
+        print(" ... Working on timestep {} using cluster {}".format(i, iclust))
         y, resnorms = gauss_newton_LSPG(res, jac, basis, yp)
         w = basis.dot(y)
 
-        red_coords[:,i+1] = y.copy()
+        red_coords += [y.copy()]
         snaps[:,i+1] = w.copy()
         wp = w.copy()
         yp = y.copy()
+
+        iclust = nearest_centroid(w, centroids)
+        iclusts += [iclust]
+        if iclusts[-2] != iclusts[-1]:
+            basis = local_bases[iclust]
+            yp = basis.T.dot(w)
+            wp = basis.dot(yp)
 
     return snaps
 
@@ -328,6 +340,76 @@ def POD(snaps):
     u, s, vh = np.linalg.svd(snaps, full_matrices=False)
     return u, s
 
+def podsize(svals, energy_thresh=None, min_size=None, max_size=None):
+    """ Returns the number of vectors in a basis that meets the given criteria """
+
+    if (energy_thresh is None) and (min_size is None) and (max_size is None):
+        raise RuntimeError('Must specify at least one truncation criteria in podsize()')
+
+    if energy_thresh is not None:
+        svals_squared = np.square(svals.copy())
+        energies = np.cumsum(svals_squared)
+        energies /= np.square(svals).sum()
+        numvecs = np.where(energies >= energy_thresh)[0][0]
+    else:
+        numvecs = min_size
+
+    if min_size is not None and numvecs < min_size:
+        numvecs = min_size
+
+    if max_size is not None and numvecs > max_size:
+        numvecs = max_size
+
+    return numvecs
+
+def compute_local_bases(snaps, num_clusts, energy_thresh):
+    """ 
+    Given a set of snapshots, cluster them and form POD bases for each set of
+    clustered snapshots
+    """
+    kmeans = clust.KMeans(n_clusters=num_clusts, random_state=0)
+    kmeans.fit(snaps.T)
+    clust_assignments = kmeans.labels_
+    centroids = kmeans.cluster_centers_
+    local_bases = []
+    for iclust in range(num_clusts):
+        clust_snaps = snaps[:, clust_assignments == iclust]
+        basis, sigma = POD(clust_snaps)
+        num_vecs = podsize(sigma, energy_thresh=energy_thresh)
+        local_bases += [ basis[:, :num_vecs] ]
+
+    return local_bases, centroids
+
+def nearest_centroid(w, centroids):
+    """ Returns the index of the nearest centroid to the state w """
+    num_clusts = centroids.shape[0]
+    dists = [np.linalg.norm(w - centroids[iclust, :]) for iclust in range(num_clusts)]
+    inearest = np.array(dists).argmin()
+    return inearest
+
+def compute_ECSW_training_matrix(snaps, prev_snaps, basis, res, jac, grid, dt, mu):
+    """
+    Assembles the ECSW hyper-reduction training matrix.  Running a non-negative least
+    squares algorithm with an early stopping criteria on these matrices will give the
+    sample nodes and weights
+    This assumes the snapshots are for scalar-valued state variables
+    """
+    n_hdm, n_snaps = snaps.shape
+    n_pod = basis.shape[1]
+    C = np.zeros((n_pod * n_snaps, n_hdm))
+    for isnap in range(1,n_snaps):
+        snap = prev_snaps[:, isnap]
+        uprev = prev_snaps[:, isnap]
+        u_proj = (basis.dot(basis.T)).dot(snap)
+        ires = res(snap, grid, dt, uprev, mu)
+        Ji = jac(snap, grid, dt)
+        Wi = Ji.dot(basis)
+        rki = Wi.T.dot(ires)
+        for inode in range(n_hdm):
+            C[isnap*n_pod:isnap*n_pod+n_pod, inode] = ires[inode]*Wi[inode]
+
+    return C
+
 def param_to_snap_fn(mu, snap_folder="param_snaps", suffix='.npy'):
     npar = len(mu)
     snapfn = snap_folder + '/'
@@ -373,100 +455,60 @@ def plot_snaps(grid, snaps, snaps_to_plot, linewidth=2, color='black', linestyle
 
     return fig, ax
 
-def compute_ECSW_training_matrix(snaps, prev_snaps, basis, res, jac, grid, dt, mu):
-    """
-    Assembles the ECSW hyper-reduction training matrix.  Running a non-negative least
-    squares algorithm with an early stopping criteria on these matrices will give the
-    sample nodes and weights
-    This assumes the snapshots are for scalar-valued state variables
-    """
-    n_hdm, n_snaps = snaps.shape
-    n_pod = basis.shape[1]
-    C = np.zeros((n_pod * n_snaps, n_hdm))
-    for isnap in range(1,n_snaps):
-        snap = prev_snaps[:, isnap]
-        uprev = prev_snaps[:, isnap]
-        u_proj = (basis.dot(basis.T)).dot(snap)
-        ires = res(snap, grid, dt, uprev, mu)
-        Ji = jac(snap, grid, dt)
-        Wi = Ji.dot(basis)
-        rki = Wi.T.dot(ires)
-        for inode in range(n_hdm):
-            C[isnap*n_pod:isnap*n_pod+n_pod, inode] = ires[inode]*Wi[inode]
-
-    return C
-
 
 def main():
 
     snap_folder = 'param_snaps'
-    num_vecs = 50
-    ecsw_max_support = 250
-    ecsw_err_thresh = 1E-16
-    snap_sample_factor = 10
+    num_clusts = 5
+    energy_thresh = 0.999999
 
     dt = 0.07
-    num_steps = 400
+    num_steps = 500
     num_cells = 500
     xl, xu = 0, 100
     w0 = np.ones(num_cells)
     grid = make_1D_grid(xl, xu, num_cells)
 
-    mu_list = [
-               [4.7, 0.026],
+    mu_samples = [
+               [4.3, 0.021],
+               [5.1, 0.030]
               ]
     mu_rom = [4.7, 0.026]
 
     # Generate or retrive HDM snapshots
     all_snaps_list = []
-    for mu in mu_list:
+    for mu in mu_samples:
         snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder=snap_folder)
-        all_snaps_list += [snaps[:, :num_steps]]
+        all_snaps_list += [snaps]
 
-    all_snaps = np.hstack(all_snaps_list)   
+    snaps = np.hstack(all_snaps_list)   
 
-    # construct basis using mu_list params
-    basis, sigma = POD(all_snaps)
+    # construct basis using mu_samples params
+    basis, sigma = POD(snaps)
+    num_vecs = podsize(sigma, energy_thresh=energy_thresh)
     basis_trunc = basis[:, :num_vecs]
+    local_bases, centroids = compute_local_bases(snaps, num_clusts, energy_thresh)
 
-    # Perform ECSW hyper-reduction
-    Clist = []
-    for imu, mu in enumerate(mu_list):
-        mu_snaps = all_snaps_list[imu]
-        Ci = compute_ECSW_training_matrix(mu_snaps[:, 1:num_steps], 
-                                          mu_snaps[:, 0:num_steps-1], 
-                                          basis_trunc, inviscid_burgers_res,
-                                          inviscid_burgers_jac, grid, dt, mu)
-        Clist += [Ci]
-    C = np.vstack(Clist)
-
-    weights1, rnormsq1, res1 = lsqnonneg(C[:,5:], C[:,5:].sum(axis=1), max_support=ecsw_max_support, 
-                                            rel_err_thresh=ecsw_err_thresh)
-    weights = np.append(np.ones((5,)), weights1)
-
-
-    # evaluate ROMs at mu_rom
+    # evaluate ROM at mu_rom
+    local_rom_snaps = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
+                                                  local_bases, centroids)
+    rom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
     hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
-    hprom_snaps = inviscid_burgers_ecsw(grid, weights, w0, dt, num_steps, mu_rom, basis_trunc)
-    # prom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
 
     fig, ax = plt.subplots()
-    snaps_to_plot = range(num_steps//4, num_steps+1, num_steps//4)
+    snaps_to_plot = range(50, 501, 50)
     plot_snaps(grid, hdm_snaps, snaps_to_plot, 
                label='HDM', fig_ax=(fig,ax))
-    # plot_snaps(grid, prom_snaps, snaps_to_plot, 
-    #            label='PROM', fig_ax=(fig,ax), color='blue', linewidth=1)
-    plot_snaps(grid, hprom_snaps, snaps_to_plot, 
-               label='HPROM', fig_ax=(fig,ax), color='red', linewidth=1, linestyle='dashed')
+    plot_snaps(grid, rom_snaps, snaps_to_plot, 
+               label='PROM', fig_ax=(fig,ax), color='blue', linewidth=1)
 
     ax.set_xlim([grid.min(), grid.max()])
     ax.set_xlabel('x')
     ax.set_ylabel('w')
-    ax.set_title('Comparing HDM and ROMs')
+    ax.set_title('Comparing HDM and ROM')
     ax.legend()
     plt.show()
 
-    pdb.set_trace()
     
 
 
