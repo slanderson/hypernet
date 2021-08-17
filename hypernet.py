@@ -86,6 +86,49 @@ def inviscid_burgers_implicit(grid, w0, dt, num_steps, mu):
 
     return snaps
 
+def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
+    """
+    Use a first-order Godunov spatial discretization and a second-order trapezoid rule
+    time integrator to solve an LSPG PROM for a parameterized inviscid 1D burgers problem
+    with a source term. The parameters are as follows:
+    mu[0]: inlet state value
+    mu[1]: the exponential rate of the exponential source term
+
+    so the equation solved is
+    w_t + (0.5 * w^2)_x = 0.02 * exp(mu[1]*x)
+    w(x=grid[0], t) = mu[0]
+    w(x, t=0) = w0
+    """
+
+    npod = basis.shape[1]
+    snaps =  np.zeros((w0.size, num_steps+1))
+    red_coords = np.zeros((npod, num_steps+1))
+    y0 = basis.T.dot(w0)
+    w0 = basis.dot(y0)
+    snaps[:,0] = w0
+    red_coords[:,0] = y0
+    wp = w0.copy()
+    yp = y0.copy()
+    print("Running ROM of size {} for mu1={}, mu2={}".format(npod, mu[0], mu[1]))
+    for i in range(num_steps):
+
+        def res(w): 
+            return inviscid_burgers_res(w, grid, dt, wp, mu)
+
+        def jac(w):
+            return inviscid_burgers_jac(w, grid, dt)
+
+        print(" ... Working on timestep {}".format(i))
+        y, resnorms = gauss_newton_LSPG(res, jac, basis, yp)
+        w = basis.dot(y)
+
+        red_coords[:,i+1] = y.copy()
+        snaps[:,i+1] = w.copy()
+        wp = w.copy()
+        yp = y.copy()
+
+    return snaps
+
 def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centroids):
     """
     Use a first-order Godunov spatial discretization and a second-order trapezoid rule
@@ -362,7 +405,7 @@ def podsize(svals, energy_thresh=None, min_size=None, max_size=None):
 
     return numvecs
 
-def compute_local_bases(snaps, num_clusts, energy_thresh):
+def compute_local_bases(snaps, num_clusts, energy_thresh=None, min_size=None, max_size=None):
     """ 
     Given a set of snapshots, cluster them and form POD bases for each set of
     clustered snapshots
@@ -375,7 +418,7 @@ def compute_local_bases(snaps, num_clusts, energy_thresh):
     for iclust in range(num_clusts):
         clust_snaps = snaps[:, clust_assignments == iclust]
         basis, sigma = POD(clust_snaps)
-        num_vecs = podsize(sigma, energy_thresh=energy_thresh)
+        num_vecs = podsize(sigma, energy_thresh=energy_thresh, min_size=None, max_size=None)
         local_bases += [ basis[:, :num_vecs] ]
 
     return local_bases, centroids
@@ -461,6 +504,9 @@ def main():
     snap_folder = 'param_snaps'
     num_clusts = 5
     energy_thresh = 0.999999
+    energy_thresh_local = 0.9999999
+    min_size = 50
+    max_size = None
 
     dt = 0.07
     num_steps = 500
@@ -487,7 +533,9 @@ def main():
     basis, sigma = POD(snaps)
     num_vecs = podsize(sigma, energy_thresh=energy_thresh)
     basis_trunc = basis[:, :num_vecs]
-    local_bases, centroids = compute_local_bases(snaps, num_clusts, energy_thresh)
+    local_bases, centroids = compute_local_bases(snaps, num_clusts, 
+                                                 energy_thresh=energy_thresh_local, 
+                                                 min_size=min_size, max_size=max_size)
 
     # evaluate ROM at mu_rom
     local_rom_snaps = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
@@ -501,13 +549,17 @@ def main():
                label='HDM', fig_ax=(fig,ax))
     plot_snaps(grid, rom_snaps, snaps_to_plot, 
                label='PROM', fig_ax=(fig,ax), color='blue', linewidth=1)
+    plot_snaps(grid, local_rom_snaps, snaps_to_plot, 
+               label='Local PROM', fig_ax=(fig,ax), color='red', linewidth=1)
 
     ax.set_xlim([grid.min(), grid.max()])
     ax.set_xlabel('x')
     ax.set_ylabel('w')
-    ax.set_title('Comparing HDM and ROM')
+    ax.set_title('Comparing HDM and ROMs')
     ax.legend()
     plt.show()
+
+    pdb.set_trace()
 
     
 
