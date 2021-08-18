@@ -4,6 +4,7 @@ Use the Burgers equation to try out some learning-based hyper-reduction approach
 
 
 import glob
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -405,23 +406,63 @@ def podsize(svals, energy_thresh=None, min_size=None, max_size=None):
 
     return numvecs
 
-def compute_local_bases(snaps, num_clusts, energy_thresh=None, min_size=None, max_size=None):
+def compute_local_bases(snaps, num_clusts, energy_thresh=None, min_size=None,
+                        max_size=None, overlap_frac=None):
     """ 
     Given a set of snapshots, cluster them and form POD bases for each set of
     clustered snapshots
     """
     kmeans = clust.KMeans(n_clusters=num_clusts, random_state=0)
     kmeans.fit(snaps.T)
-    clust_assignments = kmeans.labels_
+    clust_inds = [np.where(kmeans.labels_ == i)[0] for i in range(num_clusts)]
     centroids = kmeans.cluster_centers_
+    if overlap_frac is not None:
+        clust_inds, centroids = apply_kmeans_overlap(clust_inds, centroids, snaps, overlap_frac=overlap_frac)
     local_bases = []
     for iclust in range(num_clusts):
-        clust_snaps = snaps[:, clust_assignments == iclust]
+        clust_snaps = snaps[:, clust_inds[iclust]]
         basis, sigma = POD(clust_snaps)
         num_vecs = podsize(sigma, energy_thresh=energy_thresh, min_size=min_size, max_size=max_size)
         local_bases += [ basis[:, :num_vecs] ]
 
     return local_bases, centroids
+
+def apply_kmeans_overlap(clust_inds, centroids, snaps, overlap_frac=0.1):
+    """ 
+    Given a set of kmeans-assigned clust indices and snapshots, produce new cluster
+    indices with overlap
+    """  
+    nclust = centroids.shape[0]
+    nsnaps = snaps.shape[1]
+    neighbs = [set() for i in range(nclust)]
+    # build inter-cluster connectivity
+    for isnap in range(nsnaps):
+        snap = snaps[:, isnap]
+        dists = np.array([np.linalg.norm(snap - centroids[i,:]) for i in range(nclust)])
+        nearest_inds = np.argpartition(dists, 2)[:2]
+        neighbs[nearest_inds[0]].add(nearest_inds[1])
+        neighbs[nearest_inds[1]].add(nearest_inds[0])
+
+    # augment clusters to add overlap
+    new_clust_inds = []
+    for iclust in range(nclust):
+        new_clust_inds_i = set(clust_inds[iclust])
+        for ineighb in neighbs[iclust]:
+            num_neighb_snaps = clust_inds[ineighb].size
+            num_overlap = int(math.ceil(num_neighb_snaps * overlap_frac))
+            dists = np.array([np.linalg.norm(snaps[:,i] - centroids[iclust,:]) 
+                              for i in clust_inds[ineighb]])
+            nearest_inds = clust_inds[ineighb][np.argpartition(dists, num_overlap)[:num_overlap]]
+            new_clust_inds_i = new_clust_inds_i | set(nearest_inds)
+        new_clust_inds += [list(new_clust_inds_i)]
+
+    # compute new centroids
+    new_centroids = np.zeros_like(centroids)
+    for iclust in range(nclust):
+        clust_snaps = snaps[:, new_clust_inds[iclust]]
+        new_centroids[iclust, :] = clust_snaps.mean(axis=1)
+
+    return new_clust_inds, new_centroids
 
 def nearest_centroid(w, centroids):
     """ Returns the index of the nearest centroid to the state w """
@@ -509,11 +550,12 @@ def plot_snaps(grid, snaps, snaps_to_plot, linewidth=2, color='black', linestyle
 def main():
 
     snap_folder = 'param_snaps'
-    num_clusts = 5
+    num_clusts = 10
     energy_thresh = 0.999999
-    energy_thresh_local = 0.9999999
-    min_size = 50
+    energy_thresh_local = 0.999999
+    min_size = None
     max_size = None
+    overlap_frac = 0.1
 
     dt = 0.07
     num_steps = 500
@@ -528,7 +570,7 @@ def main():
               ]
     mu_rom = [4.7, 0.026]
 
-    # Generate or retrive HDM snapshots
+    # Generate or retrieve HDM snapshots
     all_snaps_list = []
     for mu in mu_samples:
         snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder=snap_folder)
@@ -542,7 +584,8 @@ def main():
     basis_trunc = basis[:, :num_vecs]
     local_bases, centroids = compute_local_bases(snaps, num_clusts, 
                                                  energy_thresh=energy_thresh_local, 
-                                                 min_size=min_size, max_size=max_size)
+                                                 min_size=min_size, max_size=max_size,
+                                                 overlap_frac=0.1)
 
     # evaluate ROM at mu_rom
     local_rom_snaps = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
@@ -578,9 +621,6 @@ def main():
     plt.show()
 
     pdb.set_trace()
-
-    
-
 
 
 
