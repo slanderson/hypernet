@@ -681,6 +681,7 @@ def main():
                [4.3, 0.021],
                [5.1, 0.030]
               ]
+    # mu_rom = [4.3, 0.021]
     mu_rom = [4.7, 0.026]
 
     # Generate or retrieve HDM snapshots
