@@ -5,11 +5,13 @@ Use the Burgers equation to try out some learning-based hyper-reduction approach
 
 import glob
 import math
+import time
 
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
 import sklearn.cluster as clust
+import pynndescent
 
 from lsqnonneg import lsqnonneg
 
@@ -101,6 +103,10 @@ def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
     w(x, t=0) = w0
     """
 
+    num_its = 0
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
     npod = basis.shape[1]
     snaps =  np.zeros((w0.size, num_steps+1))
     red_coords = np.zeros((npod, num_steps+1))
@@ -120,7 +126,13 @@ def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
             return inviscid_burgers_jac(w, grid, dt)
 
         print(" ... Working on timestep {}".format(i))
-        y, resnorms = gauss_newton_LSPG(res, jac, basis, yp)
+        y, resnorms, times = gauss_newton_LSPG(res, jac, basis, yp)
+        jac_timep, res_timep, ls_timep = times
+        num_its += len(resnorms)
+        jac_time += jac_timep
+        res_time += res_timep
+        ls_time += ls_timep
+        
         w = basis.dot(y)
 
         red_coords[:,i+1] = y.copy()
@@ -128,7 +140,7 @@ def inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu, basis):
         wp = w.copy()
         yp = y.copy()
 
-    return snaps
+    return snaps, (num_its, jac_time, res_time, ls_time)
 
 def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centroids):
     """
@@ -144,6 +156,10 @@ def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centro
     w(x, t=0) = w0
     """
 
+    num_its = 0
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
     nclusts = len(local_bases) 
     npod_sum = sum(basis_i.shape[1] for basis_i in local_bases)
     npod_avg = npod_sum / nclusts
@@ -168,7 +184,13 @@ def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centro
             return inviscid_burgers_jac(w, grid, dt)
 
         print(" ... Working on timestep {} using cluster {}".format(i, iclust))
-        y, resnorms = gauss_newton_LSPG(res, jac, basis, yp)
+        y, resnorms, times = gauss_newton_LSPG(res, jac, basis, yp)
+        jac_timep, res_timep, ls_timep = times
+        num_its += len(resnorms)
+        jac_time += jac_timep
+        res_time += res_timep
+        ls_time += ls_timep
+
         w = basis.dot(y)
 
         red_coords += [y.copy()]
@@ -183,7 +205,71 @@ def inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu, local_bases, centro
             yp = basis.T.dot(w)
             wp = basis.dot(yp)
 
-    return snaps
+    return snaps, (num_its, jac_time, res_time, ls_time)
+
+def inviscid_burgers_LSPG_knn(grid, w0, dt, num_steps, mu, snaps, basis_size, index=None):
+    """
+    Use a first-order Godunov spatial discretization and a second-order trapezoid rule
+    time integrator to solve a knn-local LSPG PROM for a parameterized inviscid 1D burgers problem
+    with a source term. The parameters are as follows:
+    mu[0]: inlet state value
+    mu[1]: the exponential rate of the exponential source term
+
+    so the equation solved is
+    w_t + (0.5 * w^2)_x = 0.02 * exp(mu[1]*x)
+    w(x=grid[0], t) = mu[0]
+    w(x, t=0) = w0
+    """
+
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
+    tbasis = 0
+    tproj = 0
+    num_its = 0
+    rom_snaps =  np.zeros((w0.size, num_steps+1))
+    basis, basis_inds, tbasisp = get_knn_basis(w0, snaps, basis_size, index=index)
+    tbasis += tbasisp
+    t0 = time.time()
+    y0 = basis.T.dot(w0)
+    w0 = basis.dot(y0)
+    tproj += time.time() - t0
+    rom_snaps[:,0] = w0
+    red_coords = [y0]
+    basis_ind_list = []
+    wp = w0.copy()
+    yp = y0.copy()
+    print(("Running knn ROM with k={} for mu1={}, mu2={}").format(basis_size, mu[0], mu[1]))
+    for i in range(num_steps):
+
+        def res(w): 
+            return inviscid_burgers_res(w, grid, dt, wp, mu)
+
+        def jac(w):
+            return inviscid_burgers_jac(w, grid, dt)
+
+        print(" ... Working on timestep {} with snapshots {}".format(i, np.sort(basis_inds)))
+        y, resnorms, times = gauss_newton_LSPG(res, jac, basis, yp)
+        jac_timep, res_timep, ls_timep = times
+        num_its += len(resnorms)
+        jac_time += jac_timep
+        res_time += res_timep
+        ls_time += ls_timep
+
+        w = basis.dot(y)
+
+        red_coords += [y.copy()]
+        basis_ind_list += [basis_inds]
+        rom_snaps[:,i+1] = w.copy()
+
+        basis, basis_inds, tbasisp = get_knn_basis(w, snaps, basis_size, index=index)
+        tbasis += tbasisp
+        t0 = time.time()
+        yp = basis.T.dot(w)
+        wp = basis.dot(yp)
+        tproj += time.time() - t0
+
+    return rom_snaps, (tbasis, tproj, num_its, jac_time, res_time, ls_time)
 
 def inviscid_burgers_ecsw(grid, weights, w0, dt, num_steps, mu, basis):
     """
@@ -331,6 +417,9 @@ def newton_raphson(func, jac, x0, max_its=20, relnorm_cutoff=1e-12):
 
 def gauss_newton_LSPG(func, jac, basis, y0, 
                       max_its=20, relnorm_cutoff=1e-5, min_delta=0.1):
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
     y = y0.copy()
     w = basis.dot(y0)
     init_norm = np.linalg.norm(func(w))
@@ -342,14 +431,20 @@ def gauss_newton_LSPG(func, jac, basis, y0,
             break
         if (len(resnorms) > 1) and (abs((resnorms[-2] - resnorms[-1]) / resnorms[-2]) < min_delta):
             break
+        t0 = time.time()
         J = jac(w)
+        jac_time += time.time() - t0
+        t0 = time.time()
         f = func(w)
+        res_time += time.time() - t0
+        t0 = time.time()
         JV = J.dot(basis)
         dy, lst_res, rank, sval = np.linalg.lstsq(JV, -f, rcond=None)
+        ls_time += time.time() - t0
         y += dy
         w = basis.dot(y)
         
-    return y, resnorms
+    return y, resnorms, (jac_time, res_time, ls_time)
 
 def gauss_newton_ECSW(func, jac, basis, y0, w, sample_inds, sample_weights,
                       stepsize=1, max_its=20, relnorm_cutoff=1e-4, min_delta=1E-8):
@@ -471,6 +566,22 @@ def nearest_centroid(w, centroids):
     inearest = np.array(dists).argmin()
     return inearest
 
+def get_knn_basis(w, snaps, basis_size, index=None):
+    """ Returns an orthonormal basis spanning the space of the nearest snapshots to w """
+    t0 = time.time()
+    if index is None:
+        diff = np.expand_dims(w, axis=1) - snaps
+        dists = np.linalg.norm(diff, axis=0)
+        nearest_inds = np.argpartition(dists, basis_size)[:basis_size]
+    else:
+        nearest_inds, dists = index.query(np.expand_dims(w, axis=0), k=basis_size,
+                                          epsilon=0.5)
+        nearest_inds = nearest_inds.squeeze()
+    nearest_snaps = snaps[:, nearest_inds]
+    q, r  = np.linalg.qr(nearest_snaps)
+    tbasis = time.time() - t0
+    return q, nearest_inds, tbasis
+
 def compute_ECSW_training_matrix(snaps, prev_snaps, basis, res, jac, grid, dt, mu):
     """
     Assembles the ECSW hyper-reduction training matrix.  Running a non-negative least
@@ -520,7 +631,7 @@ def load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder="param_snaps"
     saved_params = get_saved_params(snap_folder=snap_folder)
     if snap_fn in saved_params:
         print("Loading saved snaps for mu1={}, mu2={}".format(mu[0], mu[1]))
-        snaps = np.load(snap_fn)
+        snaps = np.load(snap_fn)[:, :num_steps+1]
     else:
         snaps = inviscid_burgers_implicit(grid, w0, dt, num_steps, mu)
         np.save(snap_fn, snaps)
@@ -556,9 +667,11 @@ def main():
     min_size = None
     max_size = None
     overlap_frac = 0.1
+    num_knn = 10
 
     dt = 0.07
-    num_steps = 500
+    num_steps_offline = 500
+    num_steps_eval = 400
     num_cells = 500
     xl, xu = 0, 100
     w0 = np.ones(num_cells)
@@ -573,7 +686,7 @@ def main():
     # Generate or retrieve HDM snapshots
     all_snaps_list = []
     for mu in mu_samples:
-        snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder=snap_folder)
+        snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps_offline, snap_folder=snap_folder)
         all_snaps_list += [snaps]
 
     snaps = np.hstack(all_snaps_list)   
@@ -585,39 +698,92 @@ def main():
     local_bases, centroids = compute_local_bases(snaps, num_clusts, 
                                                  energy_thresh=energy_thresh_local, 
                                                  min_size=min_size, max_size=max_size,
-                                                 overlap_frac=0.1)
+                                                 overlap_frac=overlap_frac)
+    sum_npod = sum(basis_i.shape[1] for basis_i in local_bases)
+    avg_npod = sum_npod / len(local_bases)
+    # prepare the nearest-neighbor search index
+    print("Setting up nearest-neighbor index")
+    index = pynndescent.NNDescent(snaps.T, n_neighbors=200)
+    index.prepare()
 
     # evaluate ROM at mu_rom
-    local_rom_snaps = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
+    t0 = time.time()
+    knn_rom_snaps, times = inviscid_burgers_LSPG_knn(grid, w0, dt, num_steps_eval, mu_rom,
+                                                  snaps, num_knn, index=index)
+    t_knn = time.time() - t0
+    tbasis, tproj, its_knn, jac_time_knn, res_time_knn, ls_time_knn = times
+
+    t0 = time.time()
+    local_rom_snaps, times = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps_eval, mu_rom,
                                                   local_bases, centroids)
-    rom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
-    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
+    t_loc = time.time() - t0
+    its_loc, jac_time_loc, res_time_loc, ls_time_loc = times
+
+    t0 = time.time()
+    rom_snaps, times = inviscid_burgers_LSPG(grid, w0, dt, num_steps_eval, mu_rom, basis_trunc)
+    t_rom = time.time() - t0
+    its_rom, jac_time_rom, res_time_rom, ls_time_rom = times
+
+    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps_eval, snap_folder=snap_folder)
     errors, rms_err = compute_error(rom_snaps, hdm_snaps)
     local_errors, local_rms_err = compute_error(local_rom_snaps, hdm_snaps)
+    knn_errors, knn_rms_err = compute_error(knn_rom_snaps, hdm_snaps)
 
     fig, (ax1, ax2) = plt.subplots(2)
-    snaps_to_plot = range(50, 501, 50)
+    snaps_to_plot = range(num_steps_eval//10, num_steps_eval+1, num_steps_eval//10)
     plot_snaps(grid, hdm_snaps, snaps_to_plot, 
                label='HDM', fig_ax=(fig,ax1))
     plot_snaps(grid, rom_snaps, snaps_to_plot, 
                label='PROM', fig_ax=(fig,ax1), color='blue', linewidth=1)
     plot_snaps(grid, local_rom_snaps, snaps_to_plot, 
-               label='Local PROM', fig_ax=(fig,ax1), color='red', linewidth=1)
+               label='Local PROM, {} clusts, {} avg. basis size'.format(num_clusts, avg_npod), 
+               fig_ax=(fig,ax1), color='red', linewidth=1)
+    plot_snaps(grid, knn_rom_snaps, snaps_to_plot, 
+               label='knn PROM, basis size {}'.format(num_knn), 
+               fig_ax=(fig,ax1), color='orange', linewidth=1)
 
     ax1.set_xlim([grid.min(), grid.max()])
     ax1.set_xlabel('x')
     ax1.set_ylabel('w')
     ax1.set_title('Comparing HDM and ROMs')
-    ax1.legend()
+    ax1.legend(loc='upper left')
 
-    ax2.plot(errors, label='PROM error', color='blue')
-    ax2.plot(local_errors, label='Local PROM error', color='red')
+    ax2.plot(errors, label='PROM', color='blue')
+    ax2.plot(local_errors, 
+             label='Local PROM, {} clusts, {} avg. basis size'.format(num_clusts, avg_npod), 
+             color='red')
+    ax2.plot(knn_errors, 
+             label='knn PROM, basis size {}'.format(num_clusts), 
+             color='orange')
     ax2.set_xlabel('Time index')
     ax2.set_ylabel('Relative error')
     ax2.set_title('Comparing relative error')
     print('PROM rel. error:        {}'.format(rms_err))
     print('Local PROM rel. error:  {}'.format(local_rms_err))
-    ax2.legend()
+    print('knn PROM rel. error:    {}'.format(knn_rms_err))
+    print('--------------------------')
+    print(('PROM time:       {:.4f}, ' + 
+                            '{} its, ' +
+                            '{:.4f} jac, ' +
+                            '{:.4f} res, ' +
+                            '{:.4f} LS').format(t_rom, its_rom, jac_time_rom,
+                                                res_time_rom, ls_time_rom))
+    print(('Local PROM time: {:.4f}, ' +
+                            '{} its, ' +
+                            '{:.4f} jac, ' +
+                            '{:.4f} res, ' +
+                            '{:.4f} LS').format(t_loc, its_loc, jac_time_loc,
+                                                res_time_loc, ls_time_loc))
+    print(('knn PROM time:   {:.4f}, ' +
+                           '{} its, ' +
+                           '{:.4f} jac, ' +
+                           '{:.4f} res, ' +
+                           '{:.4f} LS, ' +
+                           '{:.4f} making basis, ' + 
+                           '{:.4f} projections').format(t_knn, its_knn, jac_time_knn,
+                                                        res_time_knn, ls_time_knn, tbasis, tproj))
+    ax2.legend(loc='upper right')
+    fig.tight_layout()
     plt.show()
 
     pdb.set_trace()
