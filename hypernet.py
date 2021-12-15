@@ -11,12 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
 import sklearn.cluster as clust
-import pynndescent
-
-from lsqnonneg import lsqnonneg
 
 import pdb
-
 
 def make_1D_grid(x_low, x_up, num_cells):
     """
@@ -439,6 +435,7 @@ def gauss_newton_LSPG(func, jac, basis, y0,
         res_time += time.time() - t0
         t0 = time.time()
         JV = J.dot(basis)
+        pdb.set_trace()
         dy, lst_res, rank, sval = np.linalg.lstsq(JV, -f, rcond=None)
         ls_time += time.time() - t0
         y += dy
@@ -661,134 +658,56 @@ def plot_snaps(grid, snaps, snaps_to_plot, linewidth=2, color='black', linestyle
 def main():
 
     snap_folder = 'param_snaps'
-    num_clusts = 10
-    energy_thresh = 0.999999
-    energy_thresh_local = 0.999999
-    min_size = None
-    max_size = None
-    overlap_frac = 0.1
-    num_knn = 10
+    num_vecs = 100
 
     dt = 0.07
-    num_steps_offline = 500
-    num_steps_eval = 400
-    num_cells = 500
+    num_steps = 500
+    num_cells = 512
     xl, xu = 0, 100
     w0 = np.ones(num_cells)
     grid = make_1D_grid(xl, xu, num_cells)
 
     mu_samples = [
-               [4.3, 0.021],
-               [5.1, 0.030]
+               [4.25, 0.015],
+               [4.25, 0.03],
+               [5.5, 0.03],
+               [5.5, 0.015],
               ]
-    # mu_rom = [4.3, 0.021]
-    mu_rom = [4.7, 0.026]
+    mu_rom = [4.875, 0.0225]
 
-    # Generate or retrieve HDM snapshots
+    # Generate or retrive HDM snapshots
     all_snaps_list = []
     for mu in mu_samples:
-        snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps_offline, snap_folder=snap_folder)
+        snaps = load_or_compute_snaps(mu, grid, w0, dt, num_steps, snap_folder=snap_folder)
         all_snaps_list += [snaps]
 
     snaps = np.hstack(all_snaps_list)   
 
     # construct basis using mu_samples params
     basis, sigma = POD(snaps)
-    num_vecs = podsize(sigma, energy_thresh=energy_thresh)
     basis_trunc = basis[:, :num_vecs]
-    local_bases, centroids = compute_local_bases(snaps, num_clusts, 
-                                                 energy_thresh=energy_thresh_local, 
-                                                 min_size=min_size, max_size=max_size,
-                                                 overlap_frac=overlap_frac)
-    sum_npod = sum(basis_i.shape[1] for basis_i in local_bases)
-    avg_npod = sum_npod / len(local_bases)
-    # prepare the nearest-neighbor search index
-    print("Setting up nearest-neighbor index")
-    index = pynndescent.NNDescent(snaps.T, n_neighbors=200)
-    index.prepare()
 
-    # evaluate ROM at mu_rom
-    t0 = time.time()
-    knn_rom_snaps, times = inviscid_burgers_LSPG_knn(grid, w0, dt, num_steps_eval, mu_rom,
-                                                  snaps, num_knn, index=index)
-    t_knn = time.time() - t0
-    tbasis, tproj, its_knn, jac_time_knn, res_time_knn, ls_time_knn = times
-
-    t0 = time.time()
-    local_rom_snaps, times = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps_eval, mu_rom,
-                                                  local_bases, centroids)
-    t_loc = time.time() - t0
-    its_loc, jac_time_loc, res_time_loc, ls_time_loc = times
-
-    t0 = time.time()
-    rom_snaps, times = inviscid_burgers_LSPG(grid, w0, dt, num_steps_eval, mu_rom, basis_trunc)
-    t_rom = time.time() - t0
-    its_rom, jac_time_rom, res_time_rom, ls_time_rom = times
-
-    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps_eval, snap_folder=snap_folder)
-    errors, rms_err = compute_error(rom_snaps, hdm_snaps)
-    local_errors, local_rms_err = compute_error(local_rom_snaps, hdm_snaps)
-    knn_errors, knn_rms_err = compute_error(knn_rom_snaps, hdm_snaps)
-
-    fig, (ax1, ax2) = plt.subplots(2)
-    snaps_to_plot = range(num_steps_eval//10, num_steps_eval+1, num_steps_eval//10)
-    plot_snaps(grid, hdm_snaps, snaps_to_plot, 
-               label='HDM', fig_ax=(fig,ax1))
-    plot_snaps(grid, rom_snaps, snaps_to_plot, 
-               label='PROM', fig_ax=(fig,ax1), color='blue', linewidth=1)
-    plot_snaps(grid, local_rom_snaps, snaps_to_plot, 
-               label='Local PROM, {} clusts, {} avg. basis size'.format(num_clusts, avg_npod), 
-               fig_ax=(fig,ax1), color='red', linewidth=1)
-    plot_snaps(grid, knn_rom_snaps, snaps_to_plot, 
-               label='knn PROM, basis size {}'.format(num_knn), 
-               fig_ax=(fig,ax1), color='orange', linewidth=1)
-
-    ax1.set_xlim([grid.min(), grid.max()])
-    ax1.set_xlabel('x')
-    ax1.set_ylabel('w')
-    ax1.set_title('Comparing HDM and ROMs')
-    ax1.legend(loc='upper left')
-
-    ax2.plot(errors, label='PROM', color='blue')
-    ax2.plot(local_errors, 
-             label='Local PROM, {} clusts, {} avg. basis size'.format(num_clusts, avg_npod), 
-             color='red')
-    ax2.plot(knn_errors, 
-             label='knn PROM, basis size {}'.format(num_clusts), 
-             color='orange')
-    ax2.set_xlabel('Time index')
-    ax2.set_ylabel('Relative error')
-    ax2.set_title('Comparing relative error')
-    print('PROM rel. error:        {}'.format(rms_err))
-    print('Local PROM rel. error:  {}'.format(local_rms_err))
-    print('knn PROM rel. error:    {}'.format(knn_rms_err))
-    print('--------------------------')
-    print(('PROM time:       {:.4f}, ' + 
-                            '{} its, ' +
-                            '{:.4f} jac, ' +
-                            '{:.4f} res, ' +
-                            '{:.4f} LS').format(t_rom, its_rom, jac_time_rom,
-                                                res_time_rom, ls_time_rom))
-    print(('Local PROM time: {:.4f}, ' +
-                            '{} its, ' +
-                            '{:.4f} jac, ' +
-                            '{:.4f} res, ' +
-                            '{:.4f} LS').format(t_loc, its_loc, jac_time_loc,
-                                                res_time_loc, ls_time_loc))
-    print(('knn PROM time:   {:.4f}, ' +
-                           '{} its, ' +
-                           '{:.4f} jac, ' +
-                           '{:.4f} res, ' +
-                           '{:.4f} LS, ' +
-                           '{:.4f} making basis, ' + 
-                           '{:.4f} projections').format(t_knn, its_knn, jac_time_knn,
-                                                        res_time_knn, ls_time_knn, tbasis, tproj))
-    ax2.legend(loc='upper right')
-    fig.tight_layout()
-    plt.show()
+    snaps_shifted = snaps - snaps[:,0]
 
     pdb.set_trace()
 
+    # evaluate ROM at mu_rom
+    rom_snaps, times = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
+    hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
+
+    fig, ax = plt.subplots()
+    snaps_to_plot = range(50, 501, 50)
+    plot_snaps(grid, hdm_snaps, snaps_to_plot, 
+               label='HDM', fig_ax=(fig,ax))
+    plot_snaps(grid, rom_snaps, snaps_to_plot, 
+               label='PROM', fig_ax=(fig,ax), color='blue', linewidth=1)
+
+    ax.set_xlim([grid.min(), grid.max()])
+    ax.set_xlabel('x')
+    ax.set_ylabel('w')
+    ax.set_title('Comparing HDM and ROM')
+    ax.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
