@@ -435,7 +435,6 @@ def gauss_newton_LSPG(func, jac, basis, y0,
         res_time += time.time() - t0
         t0 = time.time()
         JV = J.dot(basis)
-        pdb.set_trace()
         dy, lst_res, rank, sval = np.linalg.lstsq(JV, -f, rcond=None)
         ls_time += time.time() - t0
         y += dy
