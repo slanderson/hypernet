@@ -64,9 +64,9 @@ def main():
                                                  overlap_frac=0.1)
 
     # evaluate ROM at mu_rom
-    local_rom_snaps = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
+    local_rom_snaps, times = inviscid_burgers_LSPG_local(grid, w0, dt, num_steps, mu_rom,
                                                   local_bases, centroids)
-    rom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
+    rom_snaps, times = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
     hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
     errors, rms_err = compute_error(rom_snaps, hdm_snaps)
     local_errors, local_rms_err = compute_error(local_rom_snaps, hdm_snaps)

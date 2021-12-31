@@ -2,7 +2,6 @@
 Use the Burgers equation to try out some learning-based hyper-reduction approaches
 """
 
-
 import glob
 import math
 import time
@@ -685,8 +684,6 @@ def main():
     # construct basis using mu_samples params
     basis, sigma = POD(snaps)
     basis_trunc = basis[:, :num_vecs]
-
-    snaps_shifted = snaps - snaps[:,0]
 
     pdb.set_trace()
 

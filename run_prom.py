@@ -44,7 +44,7 @@ def main():
     basis_trunc = basis[:, :num_vecs]
 
     # evaluate ROM at mu_rom
-    rom_snaps = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
+    rom_snaps, times = inviscid_burgers_LSPG(grid, w0, dt, num_steps, mu_rom, basis_trunc)
     hdm_snaps = load_or_compute_snaps(mu_rom, grid, w0, dt, num_steps, snap_folder=snap_folder)
 
     fig, ax = plt.subplots()
