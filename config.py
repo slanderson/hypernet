@@ -20,6 +20,10 @@ NUM_CELLS = 512
 XL, XU = 0, 100
 W0 = np.ones(NUM_CELLS)
 GRID = make_1D_grid(XL, XU, NUM_CELLS)
+MU1_RANGE = 4.25, 5.5
+MU2_RANGE = 0.015, 0.03
+SAMPLES_PER_MU = 3
+
 
 
 

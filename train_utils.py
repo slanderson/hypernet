@@ -5,34 +5,83 @@ Basic utility functions/classes for training the autoencoder
 import pdb
 import numpy as np
 import matplotlib.pyplot as plt
+
 import torch
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader, TensorDataset
+
 from hypernet import (
                       make_1D_grid,
                       load_or_compute_snaps
                      )
-from torch.utils.data import DataLoader, TensorDataset
 from config import (
                     TRAIN_FRAC, BATCH_SIZE,
                     DT, NUM_STEPS, NUM_CELLS, W0, GRID, SNAP_FOLDER
                    )
 
 class TrainingMonitor:
-  def __init__(self, model_path, patience):
+  def __init__(self, model_path, patience, model, opt, scheduler):
     self.model_path = model_path
     self.best_crit = 1E16
     self.patience = patience
     self.its_since_improvement = 0
+    self.model = model
+    self.opt = opt
+    self.scheduler = scheduler
+    self.epoch = 0
+    self.train_losses = []
+    self.test_crits = []
+    self.writer = SummaryWriter()
 
-  def check_for_completion(self, test_crit):
+  def check_for_completion(self, train_loss, test_crit):
+    self.epoch += 1
     self.its_since_improvement += 1
+    self.train_losses += [train_loss]
+    self.test_crits += [test_crit]
+    self.writer.add_scalar('loss/train', train_loss, self.epoch)
+    self.writer.add_scalar('loss/test', test_crit, self.epoch)
     if test_crit < self.best_crit:
       self.best_crit = test_crit
       self.its_since_improvement = 0
+      self.save_checkpoint()
     print('  Its since improvement: {}'.format(self.its_since_improvement))
     if self.its_since_improvement > self.patience:
       return True
+    else:
+      return False
 
-    return False
+  def plot_training_curves(self):
+    fig_curves, ax_curves = plt.subplots()
+    ax_curves.semilogy(self.test_crits, label='Test loss')
+    ax_curves.semilogy(self.train_losses, label='Train loss')
+    ax_curves.set_xlabel('Epoch')
+    ax_curves.set_ylabel('MSE loss')
+    ax_curves.set_title('Training curves')
+    ax_curves.legend()
+
+  def save_checkpoint(self):
+    checkpoint = {
+        'epoch': self.epoch,
+        'model_state_dict': self.model.state_dict(),
+        'opt_state_dict': self.opt.state_dict(),
+        'sched_state_dict': self.scheduler.state_dict(),
+        'train_losses': self.train_losses,
+        'test_crits': self.test_crits
+        }
+    print('  ... saving new model')
+    torch.save(checkpoint, self.model_path)
+
+  def load_from_path(self, path):
+    print(' ... loading model from {}'.format(path))
+    checkpoint = torch.load(path)
+    self.epoch = checkpoint['epoch']
+    self.model.load_state_dict(checkpoint['model_state_dict'])
+    self.opt.load_state_dict(checkpoint['opt_state_dict'])
+    self.scheduler.load_state_dict(checkpoint['sched_state_dict'])
+    self.train_losses = checkpoint['train_losses']
+    self.test_crits = checkpoint['test_crits']
+    self.best_crit = min(self.test_crits)
+
 
 def random_split(snaps, frac, rng):
   n = snaps.shape[0]
@@ -66,15 +115,7 @@ def load_data(mu_samples):
   snaps -= ref[:, np.newaxis]
   return snaps.T, ref
 
-def show_model(model, train, test, train_losses, test_losses):
-  fig_curves, ax_curves = plt.subplots()
-  ax_curves.semilogy(test_losses, label='Test loss')
-  ax_curves.semilogy(train_losses, label='Train loss')
-  ax_curves.set_xlabel('Epoch')
-  ax_curves.set_ylabel('MSE loss')
-  ax_curves.set_title('Training curves')
-  ax_curves.legend()
-
+def show_model(model, train, test):
   fig, (ax1, ax2) = plt.subplots(2, 3)
   with torch.no_grad():
     for i, ax in enumerate(ax1):
@@ -90,5 +131,3 @@ def show_model(model, train, test, train_losses, test_losses):
       ax.plot(out.squeeze(), linewidth=1, color='r')
       ax.set_title('Test sample')
   fig.tight_layout()
-  
-  plt.show()

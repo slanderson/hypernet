@@ -2,6 +2,7 @@
 Train an autoencoder to give a reduced representation of the state
 """
 
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import pdb
@@ -12,18 +13,14 @@ import torch.optim as optim
 
 from models import Encoder, Decoder, Autoencoder, Scaler, Unscaler
 from train_utils import get_data, random_split, show_model, TrainingMonitor
-from config import SEED, NUM_CELLS, TRAIN_FRAC
+from config import SEED, NUM_CELLS, TRAIN_FRAC, MU1_RANGE, MU2_RANGE, SAMPLES_PER_MU
 
-EPOCHS = 10
+EPOCHS = 1000
 ROM_SIZE = 40
-LR_INIT = 1e-3
+LR_INIT = 1e-4
 LR_PATIENCE = 20
 COMPLETION_PATIENCE = 100
 MODEL_PATH = 'autoenc.pt'
-
-MU1_LOW, MU1_HIGH = 4.25, 5.5
-MU2_LOW, MU2_HIGH = 0.015, 0.03
-SAMPLES_PER_MU = 3
 
 def train(loader, model, loss_fn, opt, verbose=False):
   size = len(loader.dataset)
@@ -61,9 +58,11 @@ def test(loader, model, loss_fn):
   print("  Test loss: {:.7f}".format(test_loss))
   return test_loss
 
-def get_snapshot_params(samples_per_mu):
-  mu1_samples = np.linspace(MU1_LOW, MU1_HIGH, samples_per_mu)
-  mu2_samples = np.linspace(MU2_LOW, MU2_HIGH, samples_per_mu)
+def get_snapshot_params():
+  MU1_LOW, MU1_HIGH = MU1_RANGE
+  MU2_LOW, MU2_HIGH = MU2_RANGE
+  mu1_samples = np.linspace(MU1_LOW, MU1_HIGH, SAMPLES_PER_MU)
+  mu2_samples = np.linspace(MU2_LOW, MU2_HIGH, SAMPLES_PER_MU)
   mu_samples = []
   for mu1 in mu1_samples:
     for mu2 in mu2_samples:
@@ -71,14 +70,12 @@ def get_snapshot_params(samples_per_mu):
   return mu_samples
 
 def main():
-
   torch.set_default_dtype(torch.float64)
-
   rng = torch.Generator()
   rng = rng.manual_seed(SEED)
   np_rng = np.random.default_rng(SEED)
 
-  mu_samples = get_snapshot_params(SAMPLES_PER_MU)
+  mu_samples = get_snapshot_params()
   data_tuple = get_data(np_rng, mu_samples)
   train_t, val_t, train_data, val_data, train_loader, val_loader = data_tuple
 
@@ -92,21 +89,21 @@ def main():
   scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1,
                                                    patience=LR_PATIENCE, verbose=True)
 
-  train_losses = []
-  test_losses = []
-  monitor = TrainingMonitor(MODEL_PATH, COMPLETION_PATIENCE)
+  monitor = TrainingMonitor(MODEL_PATH, COMPLETION_PATIENCE, auto, opt, scheduler)
+  if len(sys.argv) > 1:
+    monitor.load_from_path(sys.argv[1])
   for t in range(EPOCHS):
     print("\nEpoch {}:".format(t+1))
     train_loss = train(train_loader, auto, loss, opt)
     test_loss = test(val_loader, auto, loss)
     scheduler.step(test_loss)
-    test_losses += [test_loss]
-    train_losses += [train_loss]
-    if monitor.check_for_completion(test_loss):
+    if monitor.check_for_completion(train_loss, test_loss):
       break
   print("Training complete!")
 
-  show_model(auto, train_data, val_data, train_losses, test_losses)
+  monitor.plot_training_curves()
+  show_model(auto, train_data, val_data)
+  plt.show()
 
   pdb.set_trace()
 
