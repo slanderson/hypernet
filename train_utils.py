@@ -92,8 +92,9 @@ def random_split(snaps, frac, rng):
   snaps2 = snaps_perm[num1:, :]
   return snaps1, snaps2
 
-def get_data(np_rng, mu_samples):
+def get_data(np_rng, mu_samples, dtype='float64'):
   snaps_np, ref = load_data(mu_samples)
+  snaps_np, ref = np.array(snaps_np, dtype=dtype), np.array(ref, dtype=dtype)
   train_np, val_np = random_split(snaps_np, TRAIN_FRAC, np_rng)
   train_t = torch.from_numpy(train_np).unsqueeze(1)
   val_t = torch.from_numpy(val_np).unsqueeze(1)

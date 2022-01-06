@@ -5,7 +5,7 @@ Define problem constants / 'magic numbers'
 import numpy as np
 from hypernet import make_1D_grid
 
-BATCH_SIZE = 40
+BATCH_SIZE = 16
 TRAIN_FRAC = 0.8
 SNAP_FOLDER = "param_snaps"
 
