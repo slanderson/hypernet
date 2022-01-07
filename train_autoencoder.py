@@ -108,7 +108,7 @@ def main():
   print("Training complete!")
 
   monitor.plot_training_curves()
-  show_model(auto, train_data, val_data)
+  show_model(auto, train_data, val_data, device=device)
   plt.show()
 
   pdb.set_trace()

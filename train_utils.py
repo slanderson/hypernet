@@ -20,7 +20,7 @@ from config import (
                    )
 
 class TrainingMonitor:
-  def __init__(self, model_path, patience, model, opt, scheduler):
+  def __init__(self, model_path, patience, model, opt, scheduler, train=True):
     self.model_path = model_path
     self.best_crit = 1E16
     self.patience = patience
@@ -31,7 +31,8 @@ class TrainingMonitor:
     self.epoch = 0
     self.train_losses = []
     self.test_crits = []
-    self.writer = SummaryWriter()
+    if train:
+      self.writer = SummaryWriter()
 
   def check_for_completion(self, train_loss, test_crit):
     self.epoch += 1
@@ -116,19 +117,19 @@ def load_data(mu_samples):
   snaps -= ref[:, np.newaxis]
   return snaps.T, ref
 
-def show_model(model, train, test):
+def show_model(model, train, test, device='cpu'):
   fig, (ax1, ax2) = plt.subplots(2, 3)
   with torch.no_grad():
     for i, ax in enumerate(ax1):
-      x = train[i][0].unsqueeze(0)
-      out = model(x)
-      ax.plot(x.squeeze(), linewidth=2, color='k')
+      x = train[i][0].unsqueeze(0).to(device)
+      out = model(x).to('cpu')
+      ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k')
       ax.plot(out.squeeze(), linewidth=1, color='r')
       ax.set_title('Training sample')
     for i, ax in enumerate(ax2):
-      x = test[i][0].unsqueeze(0)
-      out = model(x)
-      ax.plot(x.squeeze(), linewidth=2, color='k')
+      x = test[i][0].unsqueeze(0).to(device)
+      out = model(x).to('cpu')
+      ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k')
       ax.plot(out.squeeze(), linewidth=1, color='r')
       ax.set_title('Test sample')
   fig.tight_layout()
