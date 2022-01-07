@@ -117,19 +117,45 @@ def load_data(mu_samples):
   snaps -= ref[:, np.newaxis]
   return snaps.T, ref
 
+def project_onto_manifold(auto, x, lr=1e-4, num_steps=1000):
+  with torch.no_grad():
+    zi = auto.enc(auto.scaler(x)).requires_grad_()
+  zi.retain_grad()
+  xi = auto.unscaler(auto.dec(zi))
+  dec = auto.dec
+  losses = [] 
+  opt = torch.optim.Adam([zi], lr=lr)
+  for i in range(num_steps):
+    dec.zero_grad()
+    xi = auto.unscaler(dec(zi))
+    loss = ((xi - x)**2).sum()
+    loss.backward()
+    with torch.no_grad():
+      losses += [loss.item()]
+      opt.step()
+      zi.grad = None
+
+  return xi.detach()
+
 def show_model(model, train, test, device='cpu'):
   fig, (ax1, ax2) = plt.subplots(2, 3)
-  with torch.no_grad():
-    for i, ax in enumerate(ax1):
-      x = train[i][0].unsqueeze(0).to(device)
+  for i, ax in enumerate(ax1):
+    x = train[i][0].unsqueeze(0).to(device)
+    with torch.no_grad():
       out = model(x).to('cpu')
-      ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k')
-      ax.plot(out.squeeze(), linewidth=1, color='r')
-      ax.set_title('Training sample')
-    for i, ax in enumerate(ax2):
-      x = test[i][0].unsqueeze(0).to(device)
+    # proj = project_onto_manifold(model, x).to('cpu')
+    ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
+    ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
+    ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
+    ax.set_title('Training sample')
+    ax.legend()
+  for i, ax in enumerate(ax2):
+    x = test[i][0].unsqueeze(0).to(device)
+    with torch.no_grad():
       out = model(x).to('cpu')
-      ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k')
-      ax.plot(out.squeeze(), linewidth=1, color='r')
-      ax.set_title('Test sample')
+    # proj = project_onto_manifold(model, x).to('cpu')
+    ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
+    ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
+    ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
+    ax.set_title('Test sample')
   fig.tight_layout()
