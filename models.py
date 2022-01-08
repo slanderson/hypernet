@@ -3,22 +3,41 @@ Pytorch neural network models
 """
 
 from torch import nn
+import pdb
 
 class Encoder(nn.Module):
-  def __init__(self, hdm_size, rom_size):
+  def __init__(self, hdm_size, rom_size, carlberg=True):
     super(Encoder, self).__init__()
-    self.elu_stack = nn.Sequential(
-        nn.Conv1d(1, 8, 25, stride=2, padding=12),
-        nn.ELU(),
-        nn.Conv1d(8, 16, 25, stride=4, padding=12),
-        nn.ELU(),
-        nn.Conv1d(16, 32, 25, stride=4, padding=12),
-        nn.ELU(),
-        nn.Conv1d(32, 64, 25, stride=4, padding=12),
-        nn.ELU(),
-        nn.Flatten(),
-        nn.Linear(64*4, rom_size),
-        )
+    if carlberg:
+      self.elu_stack = nn.Sequential(
+          nn.Conv1d(1, 8, 25, stride=2, padding=12),
+          nn.ELU(),
+          nn.Conv1d(8, 16, 25, stride=4, padding=12),
+          nn.ELU(),
+          nn.Conv1d(16, 32, 25, stride=4, padding=12),
+          nn.ELU(),
+          nn.Conv1d(32, 64, 25, stride=4, padding=12),
+          nn.ELU(),
+          nn.Flatten(),
+          nn.Linear(64*4, rom_size),
+          )
+    else:
+      self.elu_stack = nn.Sequential(
+          nn.Conv1d(1, 8, 4, stride=2, padding=1),
+          nn.ELU(),
+          nn.Conv1d(8, 8, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.Conv1d(8, 32, 4, stride=4, padding=0),
+          nn.ELU(),
+          nn.Conv1d(32, 32, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.Conv1d(32, 128, 4, stride=4, padding=0),
+          nn.ELU(),
+          nn.Conv1d(128, 128, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.Flatten(),
+          nn.Linear(128*16, rom_size),
+          )
 
   def forward(self, x):
     z = self.elu_stack(x)
@@ -26,20 +45,38 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-  def __init__(self, hdm_size, rom_size):
+  def __init__(self, hdm_size, rom_size, carlberg=True):
     super(Decoder, self).__init__()
-    self.elu_stack = nn.Sequential(
-        nn.Linear(rom_size, 64*4),
-        nn.ELU(),
-        nn.Unflatten(1, (64, 4)),
-        nn.ConvTranspose1d(64, 64, 25, stride=4, padding=12, output_padding=3),
-        nn.ELU(),
-        nn.ConvTranspose1d(64, 32, 25, stride=4, padding=12, output_padding=3),
-        nn.ELU(),
-        nn.ConvTranspose1d(32, 16, 25, stride=4, padding=12, output_padding=3),
-        nn.ELU(),
-        nn.ConvTranspose1d(16, 1, 25, stride=2, padding=12, output_padding=1),
-        )
+    if carlberg:
+      self.elu_stack = nn.Sequential(
+          nn.Linear(rom_size, 64*4),
+          nn.ELU(),
+          nn.Unflatten(1, (64, 4)),
+          nn.ConvTranspose1d(64, 64, 25, stride=4, padding=12, output_padding=3),
+          nn.ELU(),
+          nn.ConvTranspose1d(64, 32, 25, stride=4, padding=12, output_padding=3),
+          nn.ELU(),
+          nn.ConvTranspose1d(32, 16, 25, stride=4, padding=12, output_padding=3),
+          nn.ELU(),
+          nn.ConvTranspose1d(16, 1, 25, stride=2, padding=12, output_padding=1),
+          )
+    else:
+      self.elu_stack = nn.Sequential(
+          nn.Linear(rom_size, 128*16),
+          nn.ELU(),
+          nn.Unflatten(1, (128, 16)),
+          nn.Conv1d(128, 128, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.ConvTranspose1d(128, 32, 4, stride=4, padding=0),
+          nn.ELU(),
+          nn.Conv1d(32, 32, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.ConvTranspose1d(32, 8, 4, stride=4, padding=0),
+          nn.ELU(),
+          nn.Conv1d(8, 8, 5, stride=1, padding=2),
+          nn.ELU(),
+          nn.ConvTranspose1d(8, 1, 4, stride=2, padding=1),
+          )
 
   def forward(self, z):
     x = self.elu_stack(z)

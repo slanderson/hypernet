@@ -19,6 +19,8 @@ from train_autoencoder import (
 from models import Scaler, Unscaler, Encoder, Decoder, Autoencoder
 from config import SEED, NUM_CELLS
 
+CARLBERG = False
+
 def main():
   device = "cuda" if torch.cuda.is_available() else "cpu"
   # device = 'cpu'
@@ -40,8 +42,8 @@ def main():
 
   scaler = Scaler(train_t).to(device)
   unscaler = Unscaler(train_t).to(device)
-  enc = Encoder(NUM_CELLS, ROM_SIZE).to(device)
-  dec = Decoder(NUM_CELLS, ROM_SIZE).to(device)
+  enc = Encoder(NUM_CELLS, ROM_SIZE, carlberg=CARLBERG).to(device)
+  dec = Decoder(NUM_CELLS, ROM_SIZE, carlberg=CARLBERG).to(device)
   auto = Autoencoder(enc, dec, scaler, unscaler).to(device)
   opt = optim.Adam(auto.parameters(), lr=LR_INIT)
   scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.1,

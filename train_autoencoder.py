@@ -17,10 +17,11 @@ from config import SEED, NUM_CELLS, TRAIN_FRAC, MU1_RANGE, MU2_RANGE, SAMPLES_PE
 
 EPOCHS = 1000
 ROM_SIZE = 40
-LR_INIT = 1e-4
+LR_INIT = 1e-3
 LR_PATIENCE = 20
 COMPLETION_PATIENCE = 100
 MODEL_PATH = 'autoenc.pt'
+CARLBERG = False
 
 def train(loader, model, loss_fn, opt, device, verbose=False):
   size = len(loader.dataset)
@@ -87,8 +88,8 @@ def main():
 
   scaler = Scaler(train_t).to(device)
   unscaler = Unscaler(train_t).to(device)
-  enc = Encoder(NUM_CELLS, ROM_SIZE).to(device)
-  dec = Decoder(NUM_CELLS, ROM_SIZE).to(device)
+  enc = Encoder(NUM_CELLS, ROM_SIZE, carlberg=CARLBERG).to(device)
+  dec = Decoder(NUM_CELLS, ROM_SIZE, carlberg=CARLBERG).to(device)
   auto = Autoencoder(enc, dec, scaler, unscaler).to(device)
   loss = nn.MSELoss()
   opt = optim.Adam(auto.parameters(), lr=LR_INIT)

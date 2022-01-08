@@ -146,7 +146,7 @@ def show_model(model, train, test, device='cpu'):
     # proj = project_onto_manifold(model, x).to('cpu')
     ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
     ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
-    ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
+    # ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
     ax.set_title('Training sample')
     ax.legend()
   for i, ax in enumerate(ax2):
@@ -156,6 +156,6 @@ def show_model(model, train, test, device='cpu'):
     # proj = project_onto_manifold(model, x).to('cpu')
     ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
     ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
-    ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
+    # ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
     ax.set_title('Test sample')
   fig.tight_layout()
