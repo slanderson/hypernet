@@ -15,11 +15,11 @@ from models import Encoder, Decoder, Autoencoder, Scaler, Unscaler
 from train_utils import get_data, random_split, show_model, TrainingMonitor
 from config import SEED, NUM_CELLS, TRAIN_FRAC, MU1_RANGE, MU2_RANGE, SAMPLES_PER_MU
 
-EPOCHS = 1000
+EPOCHS = 5000
 ROM_SIZE = 40
 LR_INIT = 1e-3
-LR_PATIENCE = 20
-COMPLETION_PATIENCE = 100
+LR_PATIENCE = 50
+COMPLETION_PATIENCE = 200
 MODEL_PATH = 'autoenc.pt'
 CARLBERG = False
 
