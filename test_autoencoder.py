@@ -19,18 +19,9 @@ from train_autoencoder import (
 from models import Scaler, Unscaler, Encoder, Decoder, Autoencoder
 from config import SEED, NUM_CELLS
 
-CARLBERG = False
+CARLBERG = False  # whether or not to use architecture from paper
 
-def main():
-  device = "cuda" if torch.cuda.is_available() else "cpu"
-  # device = 'cpu'
-  print(f"Using {device} device")
-
-  if len(sys.argv) < 2:
-    model_path = MODEL_PATH
-  else:
-    model_path = sys.argv[1]
-
+def load_autoencoder_monitor(model_path, device, plot=False):
   torch.set_default_dtype(torch.float32)
   rng = torch.Generator()
   rng = rng.manual_seed(SEED)
@@ -38,7 +29,7 @@ def main():
 
   mu_samples = get_snapshot_params()
   data_tuple = get_data(np_rng, mu_samples, dtype='float32')
-  train_t, val_t, train_data, val_data, train_loader, val_loader = data_tuple
+  train_t, val_t, train_data, val_data, train_loader, val_loader, ref = data_tuple
 
   scaler = Scaler(train_t).to(device)
   unscaler = Unscaler(train_t).to(device)
@@ -51,8 +42,22 @@ def main():
 
   monitor = TrainingMonitor(MODEL_PATH, COMPLETION_PATIENCE, auto, opt, scheduler, train=False)
   monitor.load_from_path(model_path)
-  monitor.plot_training_curves()
-  show_model(auto, train_data, val_data, device=device)
+  if plot:
+    monitor.plot_training_curves()
+    show_model(auto, train_data, val_data, device=device)
+  return monitor, ref
+
+def main():
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+  # device = 'cpu'
+  print(f"Using {device} device")
+
+  if len(sys.argv) < 2:
+    model_path = MODEL_PATH
+  else:
+    model_path = sys.argv[1]
+
+  monitor = load_autoencoder_monitor(model_path, device, plot=True)
   plt.show()
 
   pdb.set_trace()
