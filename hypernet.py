@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
 import sklearn.cluster as clust
+import torch
 
 import pdb
 
@@ -316,6 +317,67 @@ def inviscid_burgers_ecsw(grid, weights, w0, dt, num_steps, mu, basis):
 
     return snaps
 
+def inviscid_burgers_man(grid, w0, dt, num_steps, mu, auto, ref):
+    """
+    Use a first-order Godunov spatial discretization and a second-order trapezoid rule
+    time integrator to solve an LSPG manifold PROM for a parameterized inviscid 1D burgers
+    problem with a source term. The parameters are as follows:
+    mu[0]: inlet state value
+    mu[1]: the exponential rate of the exponential source term
+
+    so the equation solved is
+    w_t + (0.5 * w^2)_x = 0.02 * exp(mu[1]*x)
+    w(x=grid[0], t) = mu[0]
+    w(x, t=0) = w0
+    """
+
+    num_its = 0
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
+    w0 = torch.tensor(w0, dtype=torch.float).unsqueeze(0).unsqueeze(0)
+    ref = torch.tensor(ref, dtype=torch.float).unsqueeze(0).unsqueeze(0)
+    scaler = auto.scaler
+    unscaler = auto.unscaler
+    enc = auto.enc
+    dec = auto.dec
+    with torch.no_grad():
+      y0 = enc(scaler(w0 - ref))
+      w0 = unscaler(dec(y0)) + ref
+    nred = y0.shape[1]
+    snaps =  np.zeros((w0.shape[2], num_steps+1))
+    red_coords = np.zeros((nred, num_steps+1))
+    snaps[:,0] = w0.squeeze().numpy()
+    red_coords[:,0] = y0.squeeze().numpy()
+    wp = w0.detach().clone()
+    yp = y0.detach().clone()
+    print("Running M-ROM of size {} for mu1={}, mu2={}".format(nred, mu[0], mu[1]))
+    for i in range(num_steps):
+
+        def res(w): 
+            return inviscid_burgers_res(w, grid, dt, wp.squeeze().numpy(), mu)
+
+        def jac(w):
+            return inviscid_burgers_jac(w, grid, dt)
+
+        print(" ... Working on timestep {}".format(i))
+        y, resnorms, times = gauss_newton_man(res, jac, auto, ref, yp)
+        jac_timep, res_timep, ls_timep = times
+        num_its += len(resnorms)
+        jac_time += jac_timep
+        res_time += res_timep
+        ls_time += ls_timep
+        
+        with torch.no_grad():
+          w = unscaler(dec(y)) + ref
+
+        red_coords[:,i+1] = y.squeeze().numpy()
+        snaps[:,i+1] = w.squeeze().numpy()
+        wp = w.detach().clone()
+        yp = y.detach().clone()
+
+    return snaps, (num_its, jac_time, res_time, ls_time)
+
 def inviscid_burgers_ecsw_res(w, grid, sample_inds, dt, wp, mu):
     """ 
     Returns a residual vector for the ECSW hyper-reduced 1d inviscid burgers equation
@@ -440,6 +502,73 @@ def gauss_newton_LSPG(func, jac, basis, y0,
         w = basis.dot(y)
         
     return y, resnorms, (jac_time, res_time, ls_time)
+
+def gauss_newton_man(func, jac, auto, ref, y0,
+                     max_its=2000, relnorm_cutoff=1e-5, 
+                     lookback=10,
+                     min_delta=1e-5):
+
+    jac_time = 0
+    res_time = 0
+    ls_time = 0
+    scaler = auto.scaler
+    unscaler = auto.unscaler
+    enc = auto.enc
+    dec = auto.dec
+
+    def decode(x, with_grad=True):
+      if with_grad:
+        return unscaler(dec(x)) + ref
+      else:
+        with torch.no_grad():
+          return unscaler(dec(x)) + ref
+
+    y = y0.detach().clone()
+    with torch.no_grad():
+      w = decode(y)
+    init_norm = np.linalg.norm(func(w.squeeze().numpy()))
+    step_size = 1
+    resnorms = []
+    for i in range(max_its):
+        resnorm = np.linalg.norm(func(w.squeeze().numpy()))
+        resnorms += [resnorm]
+        if resnorm/init_norm < relnorm_cutoff:
+            break
+        if ((len(resnorms) > lookback) and
+            (abs((resnorms[-lookback] - resnorms[-1]) / resnorms[-lookback]) < min_delta)):
+            break
+        t0 = time.time()
+        J = jac(w.squeeze().numpy())
+        V = torch.autograd.functional.jacobian(decode, y)
+        V = V.squeeze().numpy()
+        jac_time += time.time() - t0
+        t0 = time.time()
+        f = func(w.squeeze().numpy())
+        res_time += time.time() - t0
+        t0 = time.time()
+        JV = J.dot(V)
+        dy, lst_res, rank, sval = np.linalg.lstsq(JV, -f, rcond=None)
+        ls_time += time.time() - t0
+        with torch.no_grad():
+          y, step_size = line_search(lambda x: np.linalg.norm(func(decode(x, False))), 
+                                     y, torch.tensor(dy, dtype=torch.float32), step_size)
+          w = decode(y, False)
+
+    return y, resnorms, (jac_time, res_time, ls_time)
+
+def line_search(func, y0, dy, step_size, 
+                min_step=1e-10, shrink_factor=2, expand_factor=1.5):
+  f0 = func(y0)
+  step_size *= expand_factor
+  while step_size >= min_step:
+    f = func(y0 + step_size*dy)
+    if f < f0:
+      return y0 + step_size*dy, step_size
+    else:
+      step_size /= shrink_factor
+
+  return y0 + step_size*dy, step_size
+
 
 def gauss_newton_ECSW(func, jac, basis, y0, w, sample_inds, sample_weights,
                       stepsize=1, max_its=20, relnorm_cutoff=1e-4, min_delta=1E-8):
