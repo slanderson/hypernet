@@ -103,7 +103,7 @@ def get_data(np_rng, mu_samples, dtype='float64'):
   val_data = TensorDataset(val_t)
   train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
   val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True)
-  return train_t, val_t, train_data, val_data, train_loader, val_loader
+  return train_t, val_t, train_data, val_data, train_loader, val_loader, ref
 
 def load_data(mu_samples):
   # Generate or retrive HDM snapshots
@@ -113,7 +113,7 @@ def load_data(mu_samples):
       all_snaps_list += [snaps[:, :-1]]
 
   snaps = np.hstack(all_snaps_list)   
-  ref = snaps[:, 0]
+  ref = snaps[:, 0].copy()
   snaps -= ref[:, np.newaxis]
   return snaps.T, ref
 
@@ -143,19 +143,15 @@ def show_model(model, train, test, device='cpu'):
     x = train[i][0].unsqueeze(0).to(device)
     with torch.no_grad():
       out = model(x).to('cpu')
-    # proj = project_onto_manifold(model, x).to('cpu')
     ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
     ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
-    # ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
     ax.set_title('Training sample')
     ax.legend()
   for i, ax in enumerate(ax2):
     x = test[i][0].unsqueeze(0).to(device)
     with torch.no_grad():
       out = model(x).to('cpu')
-    # proj = project_onto_manifold(model, x).to('cpu')
     ax.plot(x.squeeze().to('cpu'), linewidth=2, color='k', label='truth')
     ax.plot(out.squeeze(), linewidth=1, color='r', label='autoencoder')
-    # ax.plot(proj.squeeze(), linewidth=1, color='b', label='projection')
     ax.set_title('Test sample')
   fig.tight_layout()
