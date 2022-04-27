@@ -84,7 +84,7 @@ def main():
 
   mu_samples = get_snapshot_params()
   data_tuple = get_data(np_rng, mu_samples, dtype='float32')
-  train_t, val_t, train_data, val_data, train_loader, val_loader = data_tuple
+  train_t, val_t, train_data, val_data, train_loader, val_loader, ref = data_tuple
 
   scaler = Scaler(train_t).to(device)
   unscaler = Unscaler(train_t).to(device)
