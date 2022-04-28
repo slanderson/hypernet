@@ -77,7 +77,7 @@ def main():
     # rom_snaps, times = inviscid_burgers_LSPG(GRID, W0, DT, NUM_STEPS, mu_rom, basis_trunc)
     hdm_snaps = load_or_compute_snaps(mu_rom, GRID, W0, DT, NUM_STEPS, snap_folder=snap_folder)
     proj_snaps = project_onto_autoencoder(hdm_snaps, auto, ref)
-    man_snaps, man_times = inviscid_burgers_man(GRID, W0, DT, NUM_STEPS, mu_rom, auto, ref)
+    man_snaps, man_times, hrom_data = inviscid_burgers_man(GRID, W0, DT, NUM_STEPS, mu_rom, auto, ref)
     man_its, man_jac, man_res, man_ls = man_times
 
     inds_to_plot = range(0, NUM_STEPS, NUM_STEPS//5)
@@ -87,6 +87,7 @@ def main():
     linewidths = [2, 1, 1]
     compare_snaps(snaps_to_plot, inds_to_plot, labels, colors, linewidths)
 
+    np.save('hrom_data', hrom_data)
 
     pdb.set_trace()
 

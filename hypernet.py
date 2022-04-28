@@ -351,6 +351,7 @@ def inviscid_burgers_man(grid, w0, dt, num_steps, mu, auto, ref):
     red_coords[:,0] = y0.squeeze().numpy()
     wp = w0.detach().clone()
     yp = y0.detach().clone()
+    hrom_data = np.empty([0, 2*yp.shape[1]+1])
     print("Running M-ROM of size {} for mu1={}, mu2={}".format(nred, mu[0], mu[1]))
     for i in range(num_steps):
 
@@ -361,7 +362,8 @@ def inviscid_burgers_man(grid, w0, dt, num_steps, mu, auto, ref):
             return inviscid_burgers_jac(w, grid, dt)
 
         print(" ... Working on timestep {}".format(i))
-        y, resnorms, times = gauss_newton_man(res, jac, auto, ref, yp)
+        y, resnorms, times, yhist = gauss_newton_man(res, jac, auto, ref, yp)
+        hrom_data = add_hrom_data(hrom_data, yp, yhist, resnorms)
         jac_timep, res_timep, ls_timep = times
         num_its += len(resnorms)
         jac_time += jac_timep
@@ -376,7 +378,7 @@ def inviscid_burgers_man(grid, w0, dt, num_steps, mu, auto, ref):
         wp = w.detach().clone()
         yp = y.detach().clone()
 
-    return snaps, (num_its, jac_time, res_time, ls_time)
+    return snaps, (num_its, jac_time, res_time, ls_time), hrom_data
 
 def inviscid_burgers_ecsw_res(w, grid, sample_inds, dt, wp, mu):
     """ 
@@ -529,6 +531,7 @@ def gauss_newton_man(func, jac, auto, ref, y0,
     init_norm = np.linalg.norm(func(w.squeeze().numpy()))
     step_size = 1
     resnorms = []
+    yhist = [y0]
     for i in range(max_its):
         resnorm = np.linalg.norm(func(w.squeeze().numpy()))
         resnorms += [resnorm]
@@ -553,8 +556,9 @@ def gauss_newton_man(func, jac, auto, ref, y0,
           y, step_size = line_search(lambda x: np.linalg.norm(func(decode(x, False))), 
                                      y, torch.tensor(dy, dtype=torch.float32), step_size)
           w = decode(y, False)
+        yhist += [y]
 
-    return y, resnorms, (jac_time, res_time, ls_time)
+    return y, resnorms, (jac_time, res_time, ls_time), yhist
 
 def line_search(func, y0, dy, step_size, 
                 min_step=1e-10, shrink_factor=2, expand_factor=1.5):
@@ -598,6 +602,19 @@ def gauss_newton_ECSW(func, jac, basis, y0, w, sample_inds, sample_weights,
         w = basis.dot(y)
 
     return y, resnorms
+
+def add_hrom_data(hrom_data, yp, yhist, resnorms):
+  latent_dim = yp.shape[1]
+  nrow = len(resnorms)
+  ncol = hrom_data.shape[1]
+  new_block = np.zeros([nrow, ncol])
+  yp = yp.numpy()
+  new_block[:, -1] = resnorms
+  new_block[:, :latent_dim] = yp
+  for i, yi in enumerate(yhist):
+    new_block[i, latent_dim:2*latent_dim] = yi.numpy()
+
+  return np.vstack((hrom_data, new_block))
 
 def POD(snaps):
     u, s, vh = np.linalg.svd(snaps, full_matrices=False)
