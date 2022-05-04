@@ -6,8 +6,11 @@ import numpy as np
 from hypernet import make_1D_grid
 
 BATCH_SIZE = 16
+HNET_BATCH_SIZE = 128
 TRAIN_FRAC = 0.8
 SNAP_FOLDER = "param_snaps"
+
+ROM_SIZE = 40
 
 SEED = 1234557
 

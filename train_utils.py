@@ -1,5 +1,5 @@
 """
-Basic utility functions/classes for training the autoencoder
+Basic utility functions/classes for training the autoencoder and hypernet
 """
 
 import pdb
@@ -15,8 +15,9 @@ from hypernet import (
                       load_or_compute_snaps
                      )
 from config import (
-                    TRAIN_FRAC, BATCH_SIZE,
-                    DT, NUM_STEPS, NUM_CELLS, W0, GRID, SNAP_FOLDER
+                    TRAIN_FRAC, BATCH_SIZE, HNET_BATCH_SIZE,
+                    DT, NUM_STEPS, NUM_CELLS, W0, GRID, SNAP_FOLDER,
+                    ROM_SIZE
                    )
 
 class TrainingMonitor:
@@ -84,14 +85,14 @@ class TrainingMonitor:
     self.best_crit = min(self.test_crits)
 
 
-def random_split(snaps, frac, rng):
-  n = snaps.shape[0]
+def random_split(rows, frac, rng):
+  n = rows.shape[0]
   num1 = int(n*frac)
   perm = rng.permutation(n)
-  snaps_perm = snaps[perm, :]
-  snaps1 = snaps_perm[:num1, :]
-  snaps2 = snaps_perm[num1:, :]
-  return snaps1, snaps2
+  rows_perm = rows[perm, :]
+  rows1 = rows_perm[:num1, :]
+  rows2 = rows_perm[num1:, :]
+  return rows1, rows2
 
 def get_data(np_rng, mu_samples, dtype='float64'):
   snaps_np, ref = load_data(mu_samples)
@@ -104,6 +105,18 @@ def get_data(np_rng, mu_samples, dtype='float64'):
   train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
   val_loader = DataLoader(val_data, batch_size=BATCH_SIZE, shuffle=True)
   return train_t, val_t, train_data, val_data, train_loader, val_loader, ref
+
+def get_hyper_data(np_rng, hrom_fn='hrom_data.npy', dtype='float64'):
+  hrom_data = np.load(hrom_fn)
+  hrom_data = np.array(hrom_data, dtype=dtype)
+  train_np, val_np = random_split(hrom_data, TRAIN_FRAC, np_rng)
+  train_t = torch.from_numpy(train_np)
+  val_t = torch.from_numpy(val_np)
+  train_data = TensorDataset(train_t[:,:-1], train_t[:,-1])
+  val_data = TensorDataset(val_t[:,:-1], val_t[:,-1])
+  train_loader = DataLoader(train_data, batch_size=HNET_BATCH_SIZE, shuffle=True)
+  val_loader = DataLoader(val_data, batch_size=HNET_BATCH_SIZE, shuffle=True)
+  return train_t, val_t, train_data, val_data, train_loader, val_loader
 
 def load_data(mu_samples):
   # Generate or retrive HDM snapshots

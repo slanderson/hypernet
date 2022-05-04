@@ -119,3 +119,26 @@ class Unscaler(nn.Module):
   def forward(self, x):
     out = self.min + x * (self.max - self.min)
     return out
+
+
+class Hypernet(nn.Module):
+  def __init__(self, in_size):
+    super(Hypernet, self).__init__()
+    self.in_size = in_size
+    self.elu_stack = nn.Sequential(
+        nn.Linear(in_size, in_size),
+        nn.ELU(),
+        nn.Linear(in_size, in_size),
+        nn.ELU(),
+        nn.Linear(in_size, in_size),
+        nn.ELU(),
+        nn.Linear(in_size, in_size),
+        nn.ELU(),
+        nn.Linear(in_size, in_size),
+        nn.ELU(),
+        nn.Linear(in_size, 1),
+        )
+
+  def forward(self, x):
+    r = self.elu_stack(x)
+    return r
